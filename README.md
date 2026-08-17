@@ -1,0 +1,2 @@
+# Avto_Instructor_bot
+DREAM_AVTOMAKTAB
