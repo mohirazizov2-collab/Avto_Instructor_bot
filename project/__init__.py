@@ -1,0 +1,1 @@
+"""Avtomaktab Telegram bot package."""

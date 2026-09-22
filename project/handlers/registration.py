@@ -1,0 +1,794 @@
+from datetime import datetime
+
+from aiogram import Router, types, F
+from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+from ..states.registration import RegistrationState
+from ..keyboards.registration import (
+    get_gender_kb,
+    get_categories_kb,
+    get_single_category_kb,
+    get_training_type_kb,
+    get_instructor_selection_kb,
+    get_instructor_card_kb,
+    get_confirmation_kb,
+)
+
+from ..keyboards.main import get_main_menu_kb
+from ..memory_db import get_or_create_user
+from ..memory_db import save_instructor
+
+
+
+router = Router()
+
+
+# ============================================================
+# INSTRUCTOR REGISTRATION
+# ============================================================
+
+@router.message(RegistrationState.instructor_name)
+async def instructor_name(
+    message: types.Message,
+    state: FSMContext,
+):
+    name = (message.text or "").strip()
+
+    if len(name) < 3:
+        await message.answer(
+            "❌ Ism va familiyangizni to‘liq kiriting."
+        )
+        return
+
+    await state.update_data(
+        instructor_name=name
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_phone
+    )
+
+    await message.answer(
+        "📞 Telefon raqamingizni kiriting:\n\n"
+        "Masalan: <b>+998901234567</b>"
+    )
+
+
+@router.message(RegistrationState.instructor_phone)
+async def instructor_phone(
+    message: types.Message,
+    state: FSMContext,
+):
+    phone = (message.text or "").strip()
+
+    if len(phone) < 9:
+        await message.answer(
+            "❌ Telefon raqam noto‘g‘ri."
+        )
+        return
+
+    await state.update_data(
+        instructor_phone=phone
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_date_of_birth
+    )
+
+    await message.answer(
+        "🎂 Tug‘ilgan sanangizni kiriting:\n\n"
+        "Masalan: <b>15.05.2000</b>"
+    )
+
+
+@router.message(RegistrationState.instructor_date_of_birth)
+async def instructor_date_of_birth(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = (message.text or "").strip()
+
+    await state.update_data(
+        instructor_date_of_birth=value
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_experience
+    )
+
+    await message.answer(
+        "🚗 Haydovchilik bo‘yicha necha yillik tajribangiz bor?\n\n"
+        "Masalan: <b>5</b>"
+    )
+
+
+@router.message(RegistrationState.instructor_experience)
+async def instructor_experience(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = (message.text or "").strip()
+
+    try:
+        experience = int(value)
+
+        if experience < 0:
+            raise ValueError
+
+    except ValueError:
+        await message.answer(
+            "❌ Faqat musbat son kiriting.\n"
+            "Masalan: <b>5</b>"
+        )
+        return
+
+    await state.update_data(
+        instructor_experience=experience
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_hourly_price
+    )
+
+    await message.answer(
+        "💰 1 soatlik dars narxingizni kiriting:\n\n"
+        "Masalan: <b>100000</b>"
+    )
+
+
+@router.message(RegistrationState.instructor_hourly_price)
+async def instructor_hourly_price(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = (
+        message.text or ""
+    ).strip().replace(" ", "")
+
+    try:
+        price = int(value)
+
+        if price <= 0:
+            raise ValueError
+
+    except ValueError:
+        await message.answer(
+            "❌ Faqat musbat son kiriting.\n"
+            "Masalan: <b>100000</b>"
+        )
+        return
+
+    await state.update_data(
+        instructor_hourly_price=price
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_gender
+    )
+
+    await message.answer(
+        "👤 Jinsingizni tanlang:",
+        reply_markup=get_gender_kb(),
+    )
+
+
+@router.callback_query(
+    RegistrationState.instructor_gender,
+    F.data.in_({
+        "gender_male",
+        "gender_female",
+    }),
+)
+async def instructor_gender(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    gender = (
+        "male"
+        if callback.data == "gender_male"
+        else "female"
+    )
+
+    await state.update_data(
+        instructor_gender=gender
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_driving_license_front_photo
+    )
+
+    await callback.message.edit_text(
+        "🪪 Haydovchilik guvohnomangizning old tomoni rasmini yuboring."
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# DRIVING LICENSE PHOTOS
+# ============================================================
+
+@router.message(
+    RegistrationState.instructor_driving_license_front_photo
+)
+async def instructor_driving_license_front_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, guvohnomaning old tomoni rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_driving_license_front_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_driving_license_back_photo
+    )
+
+    await message.answer(
+        "🪪 Haydovchilik guvohnomangizning orqa tomoni rasmini yuboring."
+    )
+
+
+@router.message(
+    RegistrationState.instructor_driving_license_back_photo
+)
+async def instructor_driving_license_back_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, guvohnomaning orqa tomoni rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_driving_license_back_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_categories
+    )
+
+    await message.answer(
+        "🚘 Qaysi kategoriyalarda dars berasiz?\n\n"
+        "Bir yoki bir nechta kategoriyani tanlang:",
+        reply_markup=get_categories_kb(),
+    )
+
+
+# ============================================================
+# INSTRUCTOR CATEGORIES
+# ============================================================
+
+@router.callback_query(
+    RegistrationState.instructor_categories,
+    F.data.startswith("category_"),
+)
+async def instructor_category(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    category = callback.data.replace(
+        "category_",
+        "",
+        1,
+    )
+
+    data = await state.get_data()
+    selected = list(
+        data.get("categories", [])
+    )
+
+    if category in selected:
+        selected.remove(category)
+    else:
+        selected.append(category)
+
+    await state.update_data(
+        categories=selected
+    )
+
+    await callback.message.edit_reply_markup(
+        reply_markup=get_categories_kb(selected)
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(
+    RegistrationState.instructor_categories,
+    F.data == "categories_done",
+)
+async def instructor_categories_done(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    data = await state.get_data()
+
+    if not data.get("categories"):
+        await callback.answer(
+            "Avval kamida bitta kategoriya tanlang.",
+            show_alert=True,
+        )
+        return
+
+    await state.set_state(
+        RegistrationState.instructor_region
+    )
+
+    await callback.message.edit_text(
+        "📍 Qaysi hududda ishlaysiz?\n\n"
+        "Masalan: <b>Toshkent shahri</b>"
+    )
+
+    await callback.answer()
+
+
+@router.message(
+    RegistrationState.instructor_region
+)
+async def instructor_region(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = (message.text or "").strip()
+
+    if len(value) < 2:
+        await message.answer(
+            "❌ Hududni to‘liq kiriting."
+        )
+        return
+
+    await state.update_data(
+        instructor_region=value
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_vehicle_info
+    )
+
+    await message.answer(
+        "🚘 Avtomobilingiz haqida ma’lumot kiriting:\n\n"
+        "Masalan: Chevrolet Cobalt, 2023-yil"
+    )
+
+
+@router.message(
+    RegistrationState.instructor_vehicle_info
+)
+async def instructor_vehicle_info(
+    message: types.Message,
+    state: FSMContext,
+):
+    value = (message.text or "").strip()
+
+    await state.update_data(
+        instructor_vehicle_info=value
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_vehicle_photo
+    )
+
+    await message.answer(
+        "📸 Avtomobilingiz rasmini yuboring."
+    )
+
+
+@router.message(
+    RegistrationState.instructor_vehicle_photo
+)
+async def instructor_vehicle_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, avtomobil rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_vehicle_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_tech_passport_front_photo
+    )
+
+    await message.answer(
+        "📄 Texnik pasportning old tomoni rasmini yuboring."
+    )
+
+
+# ============================================================
+# TECH PASSPORT PHOTOS
+# ============================================================
+
+@router.message(
+    RegistrationState.instructor_tech_passport_front_photo
+)
+async def instructor_tech_passport_front_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, texnik pasportning old tomoni rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_tech_passport_front_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_tech_passport_back_photo
+    )
+
+    await message.answer(
+        "📄 Texnik pasportning orqa tomoni rasmini yuboring."
+    )
+
+
+@router.message(
+    RegistrationState.instructor_tech_passport_back_photo
+)
+async def instructor_tech_passport_back_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, texnik pasportning orqa tomoni rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_tech_passport_back_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_certificate_photo
+    )
+
+    await message.answer(
+        "📜 Instruktor sertifikatingiz rasmini yuboring."
+    )
+
+
+@router.message(
+    RegistrationState.instructor_certificate_photo
+)
+async def instructor_certificate_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, sertifikat rasmini yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_certificate_photo=message.photo[-1].file_id
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_profile_photo
+    )
+
+    await message.answer(
+        "🤳 Profil rasmingizni yuboring."
+    )
+
+
+@router.message(
+    RegistrationState.instructor_profile_photo
+)
+async def instructor_profile_photo(
+    message: types.Message,
+    state: FSMContext,
+):
+    if not message.photo:
+        await message.answer(
+            "❌ Iltimos, profil rasmingizni yuboring."
+        )
+        return
+
+    await state.update_data(
+        instructor_profile_photo=message.photo[-1].file_id
+    )
+
+    data = await state.get_data()
+
+    categories = ", ".join(
+        data.get("categories", [])
+    )
+
+    text = (
+        "📋 <b>Ro‘yxatdan o‘tish ma’lumotlari</b>\n\n"
+        f"👤 Ism: {data.get('instructor_name')}\n"
+        f"📞 Telefon: {data.get('instructor_phone')}\n"
+        f"🎂 Tug‘ilgan sana: {data.get('instructor_date_of_birth')}\n"
+        f"🚗 Tajriba: {data.get('instructor_experience')} yil\n"
+        f"💰 Narx: {data.get('instructor_hourly_price')} so‘m\n"
+        f"👤 Jins: {data.get('instructor_gender')}\n"
+        f"🚘 Kategoriyalar: {categories}\n"
+        f"📍 Hudud: {data.get('instructor_region')}\n"
+        f"🚗 Avtomobil: {data.get('instructor_vehicle_info')}\n\n"
+        "Ma’lumotlar to‘g‘ri bo‘lsa tasdiqlang."
+    )
+
+    await state.set_state(
+        RegistrationState.instructor_confirm
+    )
+
+    await message.answer(
+        text,
+        reply_markup=get_confirmation_kb(),
+    )
+
+
+# ============================================================
+# INSTRUCTOR CONFIRM
+# ============================================================
+
+@router.callback_query(
+    RegistrationState.instructor_confirm,
+    F.data == "confirm_register",
+)
+async def instructor_confirm(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    # ========================================================
+    # TUGMA BOSILDI
+    # ========================================================
+
+    await callback.answer("⏳ Saqlanmoqda...")
+
+    try:
+        # ====================================================
+        # FSM DATA
+        # ====================================================
+
+        data = await state.get_data()
+
+        print(
+            "INSTRUCTOR CONFIRM DATA:",
+            data,
+            flush=True,
+        )
+
+        # ====================================================
+        # ====================================================
+        # MEMORY DATABASE
+        # ====================================================
+
+        user = await get_or_create_user(
+            callback.from_user.id,
+            "instructor",
+        )
+
+        # ------------------------------------------------
+        # DATE OF BIRTH
+        # ------------------------------------------------
+
+        dob = None
+        dob_value = data.get("instructor_date_of_birth")
+
+        if dob_value:
+            try:
+                dob = datetime.strptime(
+                    dob_value,
+                    "%d.%m.%Y",
+                ).date().isoformat()
+            except (ValueError, TypeError):
+                dob = None
+
+        # ------------------------------------------------
+        # LICENSE EXPIRY
+        # ------------------------------------------------
+
+        license_expiry = None
+        expiry_value = data.get(
+            "instructor_driving_license_expiry"
+        )
+
+        if expiry_value:
+            try:
+                license_expiry = datetime.strptime(
+                    expiry_value,
+                    "%d.%m.%Y",
+                ).date().isoformat()
+            except (ValueError, TypeError):
+                license_expiry = None
+
+        # ------------------------------------------------
+        # INSTRUCTOR
+        # ------------------------------------------------
+
+        instructor_data = {
+            "user_id": user.id,
+            "full_name": data.get("instructor_name", ""),
+            "phone": data.get("instructor_phone", ""),
+            "date_of_birth": dob,
+            "experience_years": int(
+                data.get("instructor_experience", 0)
+            ),
+            "hourly_price": int(
+                data.get("instructor_hourly_price", 0)
+            ),
+            "gender": data.get(
+                "instructor_gender",
+                "unknown",
+            ),
+            "driving_license_number": data.get(
+                "instructor_driving_license"
+            ),
+            "driving_license_expiry": license_expiry,
+            "driving_license_front_photo_id": data.get(
+                "instructor_driving_license_front_photo"
+            ),
+            "driving_license_back_photo_id": data.get(
+                "instructor_driving_license_back_photo"
+            ),
+            "categories": data.get("categories", []),
+            "region": data.get("instructor_region"),
+            "vehicle_info": data.get(
+                "instructor_vehicle_info"
+            ),
+            "vehicle_photo_id": data.get(
+                "instructor_vehicle_photo"
+            ),
+            "tech_passport_front_photo_id": data.get(
+                "instructor_tech_passport_front_photo"
+            ),
+            "tech_passport_back_photo_id": data.get(
+                "instructor_tech_passport_back_photo"
+            ),
+            "instructor_certificate_photo_id": data.get(
+                "instructor_certificate_photo"
+            ),
+            "profile_photo_id": data.get(
+                "instructor_profile_photo"
+            ),
+            "is_approved": False,
+        }
+
+        instructor = await save_instructor(
+            user,
+            instructor_data
+        )
+
+        # ====================================================
+        # ADMINLAR GURUHIGA ARIZA YUBORISH
+        # ====================================================
+
+        from .admin import send_instructor_application
+
+        await send_instructor_application(
+            callback.bot,
+            instructor,
+            callback.from_user.id,
+        )
+
+        print(
+            "ADMIN GROUP: ariza yuborildi",
+            flush=True,
+        )
+
+        # CLEAR FSM
+        # ====================================================
+
+        await state.clear()
+
+        # ====================================================
+        # SUCCESS MESSAGE
+        # ====================================================
+
+        await callback.message.edit_text(
+            "🎉 <b>Tabriklaymiz!</b>\n\n"
+            "✅ Sizning instruktor sifatidagi "
+            "registratsiyangiz muvaffaqiyatli qabul qilindi.\n\n"
+            "📋 Barcha ma'lumotlaringiz saqlandi.\n"
+            "📄 Hujjatlaringiz administratorga yuborildi.\n\n"
+            "⏳ Administrator hujjatlaringizni tekshiradi.\n"
+            "✅ Tasdiqlangandan so‘ng profilingiz "
+            "o‘quvchilarga ko‘rinadi.\n\n"
+            "🚗 <b>Avtomaktab jamoasiga xush kelibsiz!</b>"
+        )
+
+    # ========================================================
+    # ERROR
+    # ========================================================
+
+    except Exception as e:
+
+        print(
+            "INSTRUCTOR CONFIRM ERROR:",
+            type(e).__name__,
+            str(e),
+            flush=True,
+        )
+
+        try:
+
+            await callback.message.edit_text(
+                "❌ <b>Registratsiyani saqlashda xatolik yuz berdi.</b>\n\n"
+                f"<code>{type(e).__name__}: {str(e)}</code>"
+            )
+
+        except Exception:
+
+            await callback.message.answer(
+                "❌ <b>Registratsiyani saqlashda xatolik yuz berdi.</b>\n\n"
+                f"<code>{type(e).__name__}: {str(e)}</code>"
+            )
+
+
+# ============================================================
+# INSTRUCTOR EDIT
+# ============================================================
+# ============================================================ INSTRUCTOR EDIT
+# ============================================================
+
+@router.callback_query(
+    RegistrationState.instructor_confirm,
+    F.data == "edit_register",
+)
+async def instructor_edit(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    await state.clear()
+
+    await state.set_state(
+        RegistrationState.instructor_name
+    )
+
+    await callback.message.edit_text(
+        "👨‍🏫 <b>Instruktor registratsiyasi</b>\n\n"
+        "Ism va familiyangizni qayta kiriting:"
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# CANCEL
+# ============================================================
+
+@router.callback_query(
+    F.data == "cancel_register"
+)
+async def cancel_register(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+):
+    await state.clear()
+
+    await callback.message.edit_text(
+        "❌ Registratsiya bekor qilindi.",
+        reply_markup=get_main_menu_kb(
+            callback.from_user.username
+        ),
+    )
+
+    await callback.answer()
+
+
+
+
+
+
+

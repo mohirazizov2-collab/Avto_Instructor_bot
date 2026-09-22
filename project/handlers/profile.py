@@ -1,0 +1,269 @@
+import json
+
+from aiogram import Router, types
+from aiogram.fsm.context import FSMContext
+try:
+    from ..memory_db import (
+        get_instructor_by_user_id,
+        get_student_by_user_id,
+        get_user_by_telegram_id,
+        get_all_students,
+        get_instructor_by_id,
+    )
+    from ..keyboards.main import get_main_menu_kb
+    from ..keyboards.profile import get_profile_kb
+except ImportError:
+    from memory_db import (
+        get_instructor_by_user_id,
+        get_student_by_user_id,
+        get_user_by_telegram_id,
+        get_all_students,
+        get_instructor_by_id,
+    )
+    from keyboards.main import get_main_menu_kb
+    from keyboards.profile import get_profile_kb
+
+router = Router()
+
+
+def format_categories(value: str | None) -> str:
+    if not value:
+        return "—"
+
+    try:
+        data = json.loads(value)
+
+        if isinstance(data, list):
+            return ", ".join(str(item) for item in data) or "—"
+
+        return str(data)
+
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+def format_price(value: int | None) -> str:
+    if value is None:
+        return "—"
+
+    return f"{value:,}".replace(",", " ") + " so'm"
+
+
+def format_date(value) -> str:
+    if not value:
+        return "—"
+
+    try:
+        return value.strftime("%d.%m.%Y")
+    except AttributeError:
+        return str(value)
+
+
+@router.callback_query(lambda c: c.data == "profile")
+async def show_profile(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
+
+    await state.clear()
+
+    user = await get_user_by_telegram_id(callback.from_user.id)
+
+    # Foydalanuvchi umuman registratsiyadan o'tmagan
+    if not user:
+        keyboard = get_profile_kb(show_edit=False)
+
+        await callback.message.edit_text(
+            "❌ <b>Siz hali registratsiyadan o'tmagansiz.</b>\n\n"
+            "Profilingizni ko'rish uchun avval registratsiyadan o'ting.",
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+
+        await callback.answer()
+        return
+
+    # ========================================================
+    # INSTRUKTOR PROFILI
+    # ========================================================
+
+    if user.role == "instructor":
+
+        instructor = await get_instructor_by_user_id(user.id)
+
+        if not instructor:
+            await callback.message.edit_text(
+                "❌ <b>Instruktor profilingiz topilmadi.</b>\n\n"
+                "Iltimos, qaytadan registratsiyadan o'ting.",
+                reply_markup=get_profile_kb(show_edit=False),
+                parse_mode="HTML",
+            )
+
+            await callback.answer()
+            return
+
+        categories = format_categories(instructor.categories)
+
+        text = (
+            "👨‍🏫 <b>INSTRUKTOR PROFILI</b>\n\n"
+            f"👤 <b>Ism-familiya:</b> {instructor.full_name}\n"
+            f"📞 <b>Telefon:</b> {instructor.phone}\n"
+            f"⚧ <b>Jins:</b> {instructor.gender or '—'}\n"
+            f"🚗 <b>Kategoriya:</b> {categories}\n"
+            f"📍 <b>Hudud:</b> {instructor.region or '—'}\n"
+            f"💼 <b>Tajriba:</b> {instructor.experience_years} yil\n"
+            f"💰 <b>1 soatlik narx:</b> {format_price(instructor.hourly_price)}\n"
+            f"⭐ <b>Reyting:</b> {instructor.rating:.1f}\n"
+            f"🚘 <b>Avtomobil:</b> {instructor.vehicle_info or '—'}\n"
+        )
+
+        if instructor.date_of_birth:
+            text += (
+                f"🎂 <b>Tug'ilgan sana:</b> "
+                f"{format_date(instructor.date_of_birth)}\n"
+            )
+
+        if instructor.driving_license_number:
+            text += (
+                f"🪪 <b>Haydovchilik guvohnomasi:</b> "
+                f"{instructor.driving_license_number}\n"
+            )
+
+        if instructor.driving_license_expiry:
+            text += (
+                f"📅 <b>Guvohnoma amal qilish muddati:</b> "
+                f"{format_date(instructor.driving_license_expiry)}\n"
+            )
+
+        if instructor.is_approved:
+            text += "\n✅ <b>Profil tasdiqlangan</b>"
+        else:
+            text += "\n⏳ <b>Profil tasdiqlanishini kutmoqda</b>"
+
+        # Instruktorni tanlagan o'quvchilar
+        all_students = get_all_students()
+        students = [
+            student
+            for student in all_students
+            if student.instructor_id == instructor.id
+        ]
+
+        if students:
+            text += "\n\n👥 <b>Sizni tanlagan o'quvchilar:</b>\n"
+
+            for student in students:
+                category = student.desired_category or "—"
+                text += (
+                    f"\n👤 {student.full_name}"
+                    f"\n🚗 Kategoriya: {category}"
+                    f"\n📞 {student.phone}\n"
+                )
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_profile_kb(show_edit=True),
+            parse_mode="HTML",
+        )
+
+        await callback.answer()
+        return
+
+    # ========================================================
+    # O'QUVCHI PROFILI
+    # ========================================================
+
+    if user.role == "student":
+
+        student = await get_student_by_user_id(user.id)
+
+        if not student:
+            await callback.message.edit_text(
+                "❌ <b>O'quvchi profilingiz topilmadi.</b>\n\n"
+                "Iltimos, qaytadan registratsiyadan o'ting.",
+                reply_markup=get_profile_kb(show_edit=False),
+                parse_mode="HTML",
+            )
+
+            await callback.answer()
+            return
+
+        text = (
+            "👤 <b>O'QUVCHI PROFILI</b>\n\n"
+            f"👤 <b>Ism-familiya:</b> {student.full_name}\n"
+            f"📞 <b>Telefon:</b> {student.phone}\n"
+            f"🎂 <b>Tug'ilgan sana:</b> {format_date(student.date_of_birth)}\n"
+            f"📍 <b>Manzil:</b> {student.address or '—'}\n"
+            f"🚗 <b>Kerakli kategoriya:</b> "
+            f"{student.desired_category or '—'}\n"
+            f"📚 <b>Ta'lim turi:</b> {student.training_type or '—'}\n"
+        )
+
+        # Biriktirilgan instruktor
+        if student.instructor_id:
+
+            instructor = await get_instructor_by_id(student.instructor_id)
+
+            if instructor:
+                text += (
+                    "\n👨‍🏫 <b>Sizning instruktoringiz:</b>\n"
+                    f"👤 {instructor.full_name}\n"
+                    f"📞 {instructor.phone}\n"
+                    f"⭐ Reyting: {instructor.rating:.1f}\n"
+                )
+            else:
+                text += "\n👨‍🏫 <b>Instruktor:</b> —"
+        else:
+            text += "\n👨‍🏫 <b>Instruktor:</b> Hali biriktirilmagan"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_profile_kb(show_edit=True),
+            parse_mode="HTML",
+        )
+
+        await callback.answer()
+        return
+
+    # Noma'lum role
+    await callback.message.edit_text(
+        "❌ <b>Profil aniqlanmadi.</b>",
+        reply_markup=get_profile_kb(show_edit=False),
+        parse_mode="HTML",
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "edit_profile")
+async def edit_profile(
+    callback: types.CallbackQuery,
+) -> None:
+
+    await callback.message.edit_text(
+        "✏️ <b>Profilni tahrirlash</b>\n\n"
+        "Bu funksiya keyingi bosqichda qo'shiladi.",
+        reply_markup=get_profile_kb(show_edit=False),
+        parse_mode="HTML",
+    )
+
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "back_to_start")
+async def back_to_start(
+    callback: types.CallbackQuery,
+    state: FSMContext,
+) -> None:
+
+    await state.clear()
+
+    await callback.message.edit_text(
+        "🚗 <b>Avtomaktab botiga xush kelibsiz!</b>\n\n"
+        "Kerakli bo'limni tanlang:",
+        reply_markup=get_main_menu_kb(
+            callback.from_user.username
+        ),
+        parse_mode="HTML",
+    )
+
+    await callback.answer()
